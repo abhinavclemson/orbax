@@ -26,6 +26,7 @@ dependencies = [
     'etils[epath,epy]',
     'typing_extensions',
     'msgpack',
+    'jaxlib',
     'numpy',
     'pyyaml',
     'nest_asyncio',
