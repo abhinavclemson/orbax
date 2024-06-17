@@ -26,11 +26,8 @@ dependencies = [
     'etils[epath,epy]',
     'typing_extensions',
     'msgpack',
-    'jax >= 0.4.25',
-    'jaxlib',
     'numpy',
     'pyyaml',
-    'tensorstore >= 0.1.51',
     'nest_asyncio',
     'protobuf'
 ]
