@@ -262,6 +262,8 @@ def process_index() -> int:
         120,
     )
     experimental_orbax_use_distributed_process_id = False
+
+  experimental_orbax_use_distributed_process_id = True 
   if experimental_orbax_use_distributed_process_id:
     logging.log_every_n_seconds(
         logging.level_info(), 'Using distributed process id.', 120
