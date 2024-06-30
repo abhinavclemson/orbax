@@ -51,6 +51,9 @@ from orbax.checkpoint.experimental.emergency import multihost as emergency_multi
 from orbax.checkpoint.multihost import multislice
 from orbax.checkpoint.path import step as step_lib
 from typing_extensions import Self  # for Python version < 3.11
+from orbax.checkpoint.logging import abstract_logger
+from orbax.checkpoint.logging import standard_logger
+from orbax.checkpoint.logging import step_statistics
 
 
 PyTree = checkpoint_manager.PyTree
@@ -280,6 +283,8 @@ class _LocalCheckpointManager(checkpoint_manager.CheckpointManager):
       *,
       options: Optional[CheckpointManagerOptions] = None,
       metadata: Optional[dict[str, Any]] = None,
+      logger: Optional[abstract_logger.AbstractLogger] = None,
+
   ):
     # TODO: b/330585086 - Fully support options.
     options = options or CheckpointManagerOptions()
@@ -300,12 +305,14 @@ class _LocalCheckpointManager(checkpoint_manager.CheckpointManager):
         enable_async_checkpointing=options.enable_async_checkpointing,
         read_only=options.local.read_only,
         single_host_load_and_broadcast=False,
+        persistent_storage=False,
     )
     super().__init__(
         directory,
         options=local_options,
         metadata=metadata,
         item_handlers=state_handler,
+        logger=logger,
     )
     self._max_to_keep = options.local.max_to_keep
     self._local_options = options.local
@@ -463,9 +470,11 @@ class CheckpointManager(
       *,
       options: Optional[CheckpointManagerOptions] = None,
       metadata: Optional[dict[str, Any]] = None,
+      logger: Optional[abstract_logger.AbstractLogger] = None,
   ):
     self._local_directory = epath.Path(local_directory)
     self._persistent_directory = epath.Path(persistent_directory)
+    self._logger = logger or standard_logger.StandardLogger()
     # TODO: b/330585086 - Fully support options.
     options = options or CheckpointManagerOptions()
     self._global_mesh = global_mesh
@@ -538,6 +547,7 @@ class CheckpointManager(
           device_array=global_mesh.devices[1:],
           options=self._options,
           metadata=self._metadata,
+          logger=self._logger,
       )
 
     logging.info(
@@ -769,8 +779,13 @@ class CheckpointManager(
         step,
         restoring_slice_id,
     )
+    step_stats = step_statistics.StepStatistics()
+    step_stats.step = step
+    step_stats.event_type = 'restore'
+    step_stats.start_time = time.time()
 
     is_restoring_slice = restoring_slice_id == self._slice_id
+    step_stats.is_restoring_slice = is_restoring_slice
 
     shape_dtypes, tree_defs = jax.tree.flatten(self._abstract_state)
 
@@ -818,11 +833,13 @@ class CheckpointManager(
           'Restoring from %s',
           restore_directory / checkpoint_manager.DEFAULT_ITEM_NAME,
       )
+      step_stats.restore_start_time = time.time()
       single_slice_pytree = self._local_state_handler.restore(
           restore_directory / checkpoint_manager.DEFAULT_ITEM_NAME,
           args=dataclasses.replace(args, restore_args=ss_args),
       )
       in_tree = tuple(jax.tree.flatten(single_slice_pytree)[0])
+      step_stats.restore_end_time = time.time()
     else:
       logging.debug(
           'emergency.CheckpointManager: secondary slice, create zeros and'
@@ -855,6 +872,9 @@ class CheckpointManager(
         '/orbax/emergency/checkpoint/read/broadcast_duration_secs',
         broadcast_elapsed_s,
     )
+    step_stats.broadcast_start_time = start_broadcast
+    step_stats.broadcast_end_time = time.time()
+    self._logger.log_entry(dataclasses.asdict(step_stats))
 
     logging.info('Finished broadcasting in %.2f', broadcast_elapsed_s)
     return jax.tree.unflatten(tree_defs, shared_states)
