@@ -317,6 +317,7 @@ class _LocalCheckpointManager(checkpoint_manager.CheckpointManager):
     self._max_to_keep = options.local.max_to_keep
     self._local_options = options.local
     self._device_array = device_array
+    self._logger = logger or standard_logger.StandardLogger()
 
   def _global_list_union_interslice(self, steps: Sequence[int]) -> Set[int]:
     barrier_processes = self._options.multiprocessing_options.active_processes
@@ -538,6 +539,7 @@ class CheckpointManager(
                   use_zarr3=True,
                   primary_host=self._persistent_primary_host,
               ),
+              logger=self._logger,
           )
       )
     else:
@@ -912,6 +914,7 @@ class CheckpointManager(
             use_ocdbt=True,
             use_zarr3=True,
         ),
+        logger=self._logger,
     ) as pcm:
       return pcm.restore(step, args=args, directory=directory)
 
