@@ -1215,7 +1215,11 @@ class CheckpointManager(AbstractCheckpointManager, epy.ContextManager):
         args = typing.cast(args_lib.Composite, args)
 
     restore_directory = self._get_read_step_directory(step, directory)
+    step_stats.restore_start_time = time.time()
     restored = self._checkpointer.restore(restore_directory, args=args)
+    step_stats.restore_end_time = time.time()
+    step_stats.end_time = step_stats.restore_end_time
+    self._logger.log_entry(dataclasses.asdict(step_stats))
     if self._single_item:
       return restored[DEFAULT_ITEM_NAME]
     return restored
