@@ -877,6 +877,7 @@ class CheckpointManager(
     step_stats.broadcast_start_time = start_broadcast
     step_stats.broadcast_end_time = time.time()
     step_stats.end_time = step_stats.broadcast_end_time
+    step_stats.persistent_storage = False
     self._logger.log_entry(dataclasses.asdict(step_stats))
     logging.info('Finished broadcasting in %.2f', broadcast_elapsed_s)
     return jax.tree.unflatten(tree_defs, shared_states)
