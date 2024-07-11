@@ -1,17 +1,3 @@
-# Copyright 2024 The Orbax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Array serialization and deserialization.
 
 TODO(b/348434669): De-fork when possible.
@@ -19,7 +5,7 @@ TODO(b/348434669): De-fork when possible.
 
 import asyncio
 from collections.abc import Awaitable
-import itertools
+import functools
 import os
 import re
 from typing import Any, Callable, Dict, Optional, Sequence, Union
@@ -34,7 +20,6 @@ import tensorstore as ts
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
-_module_unique_count = itertools.count()
 _DEFAULT_DRIVER = 'file'
 _REMOTE_URL_PREFIXES = ['gs://', 's3://']
 _REMOTE_DRIVER_VALIDATIONS = [
@@ -42,6 +27,11 @@ _REMOTE_DRIVER_VALIDATIONS = [
     {'driver': 's3', 'path_regex': None},
 ]
 
+# BEGIN GOOGLE-INTERNAL
+_DEFAULT_DRIVER = 'gfile'
+_REMOTE_URL_PREFIXES.append('gfile:///cns')
+_REMOTE_DRIVER_VALIDATIONS.append({'driver': 'gfile', 'path_regex': '^/cns/'})
+# END GOOGLE-INTERNAL
 
 Shape = tuple[int, ...]
 Index = Index = tuple[slice, ...]
@@ -102,11 +92,14 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
     if not is_gcs_path and not os.path.isabs(ckpt_path):
       raise ValueError(f'Checkpoint path should be absolute. Got {ckpt_path}')
     base_path = os.path.dirname(ckpt_path)
+    base_driver_spec = (
+        base_path
+        if is_gcs_path
+        else {'driver': _DEFAULT_DRIVER, 'path': base_path}
+    )
     spec['kvstore'] = {
         'driver': 'ocdbt',
-        'base': (
-            base_path if is_gcs_path else f'{_DEFAULT_DRIVER}://{base_path}'
-        ),
+        'base': base_driver_spec,
         'path': os.path.basename(ckpt_path),
     }
   else:
@@ -179,6 +172,69 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
+async def transfer_shard_to_host(shard: jax.Shard) -> np.ndarray:
+  """Asynchronously transfers a shard to host memory."""
+  data = shard.data
+  has_pinned_host = any(
+      m.kind == 'pinned_host' for m in shard.device.addressable_memories()
+  )
+  # if config.enable_memories.value and has_pinned_host:
+  if False:
+    # If available, transfer to pinned host memory
+    sharding = jax.sharding.SingleDeviceSharding(
+        shard.device, memory_kind='pinned_host'
+    )
+    data = jax.device_put(data, sharding)
+  else:
+    data.copy_to_host_async()
+  # Allow other transfers to be scheduled simultaneously.
+  await asyncio.sleep(0)
+  # Ensure that jax.Array's internal numpy array can be zero-copied. This guards
+  # against consumers like tensorstore that would otherwise copy silently.
+  return np.array(data, copy=False)
+
+
+# async def transfer_shard_to_host(shard: jax.Shard) -> np.ndarray:
+#   """Asynchronously transfers a shard to host memory."""
+#   data = shard.data
+#   return data
+
+
+def _get_copy_future(write_future):
+  return write_future.copy
+
+
+def _get_commit_future(write_future):
+  return write_future.commit
+
+
+async def _write_array(
+    shard: jax.Shard,
+    t: ts.TensorStore,
+    commit_future: Optional[list[Any]],
+    replica_id: int,
+    can_reference_source_data_indefinitely: bool,
+):
+  """Writes a single array using TensorStore."""
+  if shard.replica_id == replica_id:
+    data = await transfer_shard_to_host(shard)
+    write_future = t[shard.index].write(
+        data,
+        # Avoid additional copy of input array into the TensorStore chunk
+        # cache.  If `arr_inp` is a jax.Array, the result of converting
+        # it to a NumPy array, as is done internally by TensorStore, is
+        # guaranteed to be immutable and therefore it is safe to retain a
+        # reference indefinitely.
+        can_reference_source_data_indefinitely=can_reference_source_data_indefinitely,
+    )
+    if commit_future is not None:
+      assert isinstance(commit_future, list)
+      commit_future.append(_get_commit_future(write_future))
+      await _get_copy_future(write_future)
+    else:
+      await _get_commit_future(write_future)
+
+
 async def async_serialize(
     arr_inp,
     tensorstore_spec,
@@ -186,6 +242,7 @@ async def async_serialize(
     context=TS_CONTEXT,
     primary_host: Optional[int] = 0,
     replica_id: int = 0,
+    transaction: Optional[ts.Transaction] = None,
 ):
   """Serialize an array using TensorStore.
 
@@ -201,6 +258,8 @@ async def async_serialize(
       unless you are sure you know what you are doing.
     replica_id: Allows overriding the shard replica id that will be saved.
       DO NOT USE unless you are sure you know what you are doing.
+    transaction: TensorStore transaction to use for opening and writing the
+      array.  If not specified, a non-transactional write will be used.
   """
   if (
       isinstance(arr_inp, jax.Array)
@@ -230,6 +289,7 @@ async def async_serialize(
         create=True,
         open=True,
         context=context,
+        transaction=transaction,
     )
     # Asynchronous case.
     if commit_future is not None:
@@ -249,20 +309,19 @@ async def async_serialize(
       open=True,
       assume_metadata=True,
       context=context,
+      transaction=transaction,
   )
-
-  async def _write_array(shard):
-    if shard.replica_id == replica_id:
-      write_future = t[shard.index].write(shard.data)
-      if commit_future is not None:
-        assert isinstance(commit_future, list)
-        commit_future.append(write_future.commit)
-        await write_future.copy
-      else:
-        await write_future.commit
-
   local_shards = arr_inp.addressable_shards
-  future_write_state = jax.tree_util.tree_map(_write_array, local_shards)
+  future_write_state = jax.tree_util.tree_map(
+      functools.partial(
+          _write_array,
+          t=t,
+          commit_future=commit_future,
+          replica_id=replica_id,
+          can_reference_source_data_indefinitely=isinstance(arr_inp, jax.Array),
+      ),
+      local_shards,
+  )
   await asyncio.gather(*future_write_state)
 
 
