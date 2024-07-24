@@ -793,6 +793,7 @@ class CheckpointManager(
     step_stats.checkpoint_manager_start_time = time.time()
     is_restoring_slice = restoring_slice_id == self._slice_id
     step_stats.is_restoring_slice = is_restoring_slice
+    step_stats.step = step
     shape_dtypes, tree_defs = jax.tree.flatten(self._abstract_state)
 
     def _get_single_slice_sharding(
