@@ -103,7 +103,6 @@ class EmergencyRestoreStepStatistics:
       manager blocking section.
     directory: The directory of the checkpoint.
     is_restoring_slice: Whether the event is restoring a slice.
-    in_primary_slice: Whether the event is restoring on the primary slice.
     restore_start_time: The start time of restoring.
     restore_duration_secs: The duration of restoring.
     broadcast_start_time: The start time of broadcasting(Restore).The broadcast
@@ -119,7 +118,6 @@ class EmergencyRestoreStepStatistics:
   checkpoint_manager_start_time: Optional[float] = None
   directory: Optional[str] = None
   is_restoring_slice: Optional[bool] = False
-  in_primary_slice: Optional[bool] = False
   restore_start_time: Optional[float] = None
   restore_duration_secs: Optional[float] = None
   broadcast_start_time: Optional[float] = None
