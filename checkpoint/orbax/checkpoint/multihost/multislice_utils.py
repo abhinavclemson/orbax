@@ -92,7 +92,7 @@ def get_device_memory() -> int:
       'TPU trillium': int(32e9),  # one core per chip with 32 GB HBM
   }
   memory = hbm_memory.get(device.device_kind, None)
-  print(f'hbm_memory for {device.device_king} : {memory}')
+  print(f'hbm_memory for {device.device_kind} : {memory}')
   if memory is None:
     raise ValueError(
         f'get_device_memory is not supported for {device.device_kind}.'
