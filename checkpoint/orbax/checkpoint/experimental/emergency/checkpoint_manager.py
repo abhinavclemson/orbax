@@ -1059,14 +1059,15 @@ class CheckpointManager(
         replica_axis_index=self._replica_axis_index,
         is_source=is_restoring_slice,
     )
-    logging.info('Broadcasted arrays')
-    jax.tree_util.tree_map_with_path(_log_array, shared_states)
 
     broadcast_elapsed_s = time.time() - start_broadcast
     jax.monitoring.record_event_duration_secs(
         '/orbax/emergency/checkpoint/read/broadcast_duration_secs',
         broadcast_elapsed_s,
     )
+    logging.info('Broadcasted arrays')
+    jax.tree_util.tree_map_with_path(_log_array, shared_states)
+    
     step_stats.broadcast_start_time = start_broadcast
     step_stats.broadcast_duration_secs = broadcast_elapsed_s
     step_stats.checkpoint_manager_duration_secs = (
