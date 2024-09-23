@@ -70,6 +70,10 @@ _MESH_METADATA_FILE_NAME = 'mesh_metadata.json'
 _PRIMARY_REPLICA_ID = 0
 _SECONDARY_REPLICA_ID = 1
 
+def _log_array(keypath, arr):
+  logging.info('Key: %s', utils.tuple_path_from_keypath(keypath))
+  for shard in arr.addressable_shards:
+    logging.info(shard.data)
 
 def _write_process_metadata(path: epath.Path, mesh: jax.sharding.Mesh):
   """Write process metadata to the given path."""
@@ -1025,6 +1029,9 @@ class CheckpointManager(
           time.time() - step_stats.checkpointer_start_time
       )
       in_tree = tuple(jax.tree.flatten(single_slice_pytree)[0])
+
+      logging.info('Restored arrays')
+      jax.tree_util.tree_map_with_path(_log_array, in_tree)
     else:
       logging.vlog(
           1,
@@ -1052,6 +1059,9 @@ class CheckpointManager(
         replica_axis_index=self._replica_axis_index,
         is_source=is_restoring_slice,
     )
+    logging.info('Broadcasted arrays')
+    jax.tree_util.tree_map_with_path(_log_array, shared_states)
+
     broadcast_elapsed_s = time.time() - start_broadcast
     jax.monitoring.record_event_duration_secs(
         '/orbax/emergency/checkpoint/read/broadcast_duration_secs',
@@ -1072,7 +1082,8 @@ class CheckpointManager(
       finalized_shared_states = self._consistent_restore_mesh_to_global_mesh(
           shared_states
       )
-
+    logging.info('Finalized arrays')
+    jax.tree_util.tree_map_with_path(_log_array, finalized_shared_states)
     return jax.tree.unflatten(tree_defs, finalized_shared_states)
 
   def _consistent_restore_mesh_to_global_mesh(self, shared_states) -> Any:
