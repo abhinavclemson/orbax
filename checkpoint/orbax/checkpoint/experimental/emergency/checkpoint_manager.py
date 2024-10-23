@@ -707,6 +707,8 @@ class CheckpointManager(
     self._persistent_directory = epath.Path(persistent_directory)
     self._logger = logger or standard_logger.StandardLogger()
     # TODO: b/330585086 - Fully support options.
+    self._clean_up_local_tmp_checkpoints()
+
     options = options or CheckpointManagerOptions()
     self._replica_axis_index = options.replica_axis_index
     self._global_mesh = global_mesh
@@ -977,6 +979,16 @@ class CheckpointManager(
       self._local_steps = self._local_steps[-self._local_max_to_keep :]
 
     return persistent_saved or local_saved
+
+  def _clean_up_local_tmp_checkpoints(self):
+    """Cleans up any existing temporary directories."""
+    logging.info(
+        'CheckpointManager: Cleaning up existing temporary directories at %s.',
+        self._local_directory,
+    )
+    tmp_files = step_lib.tmp_checkpoints(self._local_directory)
+    for tmp_file in tmp_files:
+      (self._local_directory / tmp_file).rmtree()
 
   def _get_per_slice_local_steps(self) -> Dict[int, Set[int]]:
     local_steps = set(step_lib.checkpoint_steps(self._local_directory))
