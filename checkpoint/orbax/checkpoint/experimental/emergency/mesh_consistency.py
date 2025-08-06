@@ -148,6 +148,11 @@ def consistent_restore_mesh_to_global_mesh(
   """Transfers from consistent restore mesh to global mesh."""
   logging.info('Transferring from consistent restore mesh to global mesh')
 
+  # Print shardings for debugging purposes.
+  logging.info(
+      'consistent_restore_mesh_to_global_mesh: Shardings before transfer: %s',
+      jax.tree_util.tree_map(lambda x: x.sharding, state),
+  )
   start_transfer = time.time()
   resharded_state = jax.device_put(state, shardings, donate=True)
   transfer_elapsed_s = time.time() - start_transfer
@@ -155,6 +160,12 @@ def consistent_restore_mesh_to_global_mesh(
       'Finished transferring from consistent restore mesh to global mesh'
       ' in %.2fs',
       transfer_elapsed_s,
+  )
+  
+  # Print shardings for debugging purposes.
+  logging.info(
+      'consistent_restore_mesh_to_global_mesh: Shardings after transfer: %s',
+      jax.tree_util.tree_map(lambda x: x.sharding, resharded_state),
   )
   jax.monitoring.record_event_duration_secs(
       '/orbax/emergency/checkpoint/read/transfer_global_shard_duration_secs',
