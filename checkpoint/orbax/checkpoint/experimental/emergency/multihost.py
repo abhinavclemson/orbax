@@ -25,11 +25,12 @@ from orbax.checkpoint._src.multihost import multihost
 
 EXPERIMENTAL_USE_DISTRIBUTED_ID_FOR_MESH_CONSISTENCY = flags.DEFINE_bool(
     'experimental_use_distributed_id_for_mesh_consistency',
-    True,
+    False,
     'Decides how to Map how device ids changed across restarts. '
     'If True, use remapping distributed id for consistent restore mesh '
     'logic. If False, remaps mesh according to jax.devices() order.',
 )
+
 
 
 def _int_list_flip_index_and_value(int_list: List[int]):
