@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from absl import flags
 from absl import logging
-import epath
+from etils import epath
 import jax
 import numpy as np
 from orbax.checkpoint._src.multihost import multihost
