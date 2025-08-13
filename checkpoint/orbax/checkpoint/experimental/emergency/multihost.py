@@ -242,7 +242,7 @@ def create_replicator_file(
   os.rename(temp_file, replicator_file)
 
 
-def get_num_slices(compile_topology_num_slices: Optional[int] = 0):
+def get_num_slices(compile_topology_num_slices: int = 0):
   """Get the number of slices."""
   if jax.devices()[0].platform == 'cpu':
     logging.info('Setting num_slices=1 for CPU hardware type')
@@ -255,7 +255,6 @@ def get_num_slices(compile_topology_num_slices: Optional[int] = 0):
       return 1 + max(d.slice_index for d in devices)
     except (ValueError, AttributeError):
       return 1
-
 
 
 def initialize_multi_tier_checkpointing(
@@ -301,7 +300,7 @@ def initialize_multi_tier_checkpointing(
         initialization_timeout=jax_initialization_timeout_seconds,
     )
     multihost.initialize_runtime_to_distributed_ids()
-    multihost.initialize_distributed_to_runtime_ids()
+    multihost.initialize_distributed_to_device_ids()
     if use_replicator_service:
       wait_for_replicator_file_to_disappear(local_checkpoint_directory)
       num_slices = num_slices or get_num_slices(
@@ -350,20 +349,33 @@ def initialize_multi_tier_checkpointing(
         initialization_timeout=jax_initialization_timeout_seconds
     )
     multihost.initialize_runtime_to_distributed_ids()
-    multihost.initialize_distributed_to_runtime_ids()
+    multihost.initialize_distributed_to_device_ids()
 
 
 def _retrieve_jax_init_info(
     local_checkpoint_directory: epath.Path, timeout_seconds: int = 900
-):
-  """Retrieve JAX init info from a local file."""
-  local_jax_init_info_file = epath.Path(local_checkpoint_directory) / JAX_INIT_INFO_FILE
-  # Allow time for the JAX init info file to be populated by GKE. This is needed
-  # because the file is only populated when the worker with process id of 0 is
-  # determined. After a disruption, although some workers might be up and
-  # running, the init info file won't be populated until the node with process
-  # id of 0 is known and this could take time. Using 900 seconds for now and it
-  # needs to be increased if the "repair" time is longer.
+) -> List[str]:
+  """Retrieve JAX init info from a local file.
+
+  Args:
+    local_checkpoint_directory: The local checkpoint directory.
+    timeout_seconds: The timeout in seconds.
+
+  Returns:
+    A list of strings containing the JAX init info (process id and coordinator
+    address).
+
+  Allow time for the JAX init info file to be populated by GKE. This is needed
+  because the file is only populated when the worker with process id of 0 is
+  determined. After a disruption, although some workers might be up and
+  running, the init info file won't be populated until the node with process
+  id of 0 is known and this could take time. Using 900 seconds for now and it
+  needs to be increased if the "repair" time is longer.
+  """
+  local_jax_init_info_file = (
+      epath.Path(local_checkpoint_directory) / JAX_INIT_INFO_FILE
+  )
+
   for i in range(timeout_seconds):
     if local_jax_init_info_file.exists():
       return local_jax_init_info_file.read_text().split('\n')[:2]
@@ -379,7 +391,7 @@ def _retrieve_jax_init_info(
       'returning empty process id and coordinator address.',
       JAX_INIT_INFO_FILE,
   )
-  return '', ''
+  return ['', '']
 
 
 def _block_and_proces_restore_dir(
