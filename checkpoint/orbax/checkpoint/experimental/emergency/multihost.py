@@ -289,10 +289,10 @@ def initialize_multi_tier_checkpointing(
   )
   if process_id and coordinator_address:
     logging.info(
-        'Using {process_id} as the process_id and {coordinator_address} as the'
-        ' coordinator_address to initialize JAX distributed runtime...',
-        process_id=process_id,
-        coordinator_address=coordinator_address,
+        'Using process_id %s and coordinator_address %s to initialize JAX'
+        ' distributed runtime...',
+        process_id,
+        coordinator_address,
     )
     jax.distributed.initialize(
         process_id=process_id,
