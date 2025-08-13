@@ -295,7 +295,7 @@ def initialize_multi_tier_checkpointing(
         coordinator_address,
     )
     jax.distributed.initialize(
-        process_id=process_id,
+        process_id=int(process_id),
         coordinator_address=coordinator_address,
         initialization_timeout=jax_initialization_timeout_seconds,
     )
