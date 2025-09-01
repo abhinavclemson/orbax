@@ -214,6 +214,7 @@ class ReplicatorCheckpointManager(
     )
     self._persistent_checkpoint_manager = None
     if persistent_directory is not None:
+      logging.info('DEBUG: persistent_directory is %s.', persistent_directory)
       self._persistent_checkpoint_manager = (
           checkpoint_manager.CheckpointManager(
               persistent_directory,
