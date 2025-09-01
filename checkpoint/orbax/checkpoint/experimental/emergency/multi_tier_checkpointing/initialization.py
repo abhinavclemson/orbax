@@ -88,6 +88,7 @@ def initialize_multi_tier_checkpointing(
     run_name: The name of the run.
     jax_initialization_timeout_seconds: The timeout for JAX initialization.
   """
+  local_checkpoint_directory = epath.Path(local_checkpoint_directory)
   process_id, coordinator_address = _retrieve_jax_init_info(
       local_checkpoint_directory
   )
