@@ -18,7 +18,6 @@ import dataclasses
 from typing import Any, Awaitable, Generic, Protocol, Sequence, Tuple, Type, TypeVar
 
 import jax
-import jax.experimental.layout as jax_layout
 import numpy as np
 from orbax.checkpoint._src.arrays import types as arrays_types
 from orbax.checkpoint._src.serialization import serialization as serialization_v0
@@ -82,7 +81,7 @@ class AbstractShardedArray(Protocol):
 
   shape: Shape | None
   dtype: DType | None
-  sharding: jax.sharding.Sharding | jax_layout.Format | None = None  # pytype: disable=unsupported-operands
+  sharding: jax.sharding.Sharding | None = None  # pytype: disable=unsupported-operands
 
 
 def is_placeholder(value: Any) -> bool:
