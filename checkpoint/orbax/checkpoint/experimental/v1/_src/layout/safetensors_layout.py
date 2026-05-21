@@ -635,13 +635,14 @@ class _MultiFileLoader:
     # Each loader handles loading from a single file.
     start = time.time()
     load_ops = []
-    for loader in loaders:
-      load_ops.append(loader.load_multi_host(abstract_state))
+    # for loader in loaders:
+    #   load_ops.append(loader.load_multi_host(abstract_state))
 
     restored_pytree = {}
     total_io_time = 0.0
     total_reshard_time = 0.0
-    for file_tensors, metrics in await asyncio.gather(*load_ops):
+    for loader in loaders:
+      file_tensors, metrics = await loader.load_multi_host(abstract_state)      
       total_io_time += metrics["io_time"]
       total_reshard_time += metrics["reshard_time"]
       for name, arr in file_tensors.items():
