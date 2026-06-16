@@ -1,17 +1,3 @@
-# Copyright 2026 The Orbax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Defines `SafetensorsLayout`, a class to handle Safetensors checkpoint formats."""
 
 import asyncio
@@ -566,6 +552,88 @@ class _SingleFileLoader:
 
     return restored_pytree, {"io_time": io_time, "reshard_time": reshard_time}
 
+  async def prepare_load(
+      self, abstract_state: dict[str, Any]
+  ) -> tuple[dict[str, Any], dict[str, int], _LoadContext, float]:
+    """Asynchronously reads headers and raw byte bundles for parallel I/O phase."""
+    io_time = 0.0
+    num_hosts = multihost.process_count()
+    global_mesh, devices_by_host = _create_global_mesh()
+    host_id = jax.process_index()
+
+    t0 = time.time()
+    header, data_start_offset = await self.read_header()
+    io_time += time.time() - t0
+
+    # Partition tensors among hosts based on file offsets for contiguous I/O.
+    bundles = _get_tensor_bundles(header, num_hosts)
+
+    # Map each tensor to its owner host.
+    tensor_to_owner = {}
+    for h, bundle in enumerate(bundles):
+      for name in bundle:
+        tensor_to_owner[name] = h
+
+    t0 = time.time()
+    bundle_bytes, bundle_start_offset = await self._read_bundle(
+        bundles, host_id, header, data_start_offset
+    )
+    io_time += time.time() - t0
+
+    if not context_lib.get_context().safetensors_options.ignore_load_sharding:
+      max_shard_shape_per_dtype = _calculate_max_shard_shapes(
+          abstract_state,
+          header,
+      )
+      zero_buffers = _create_shared_zero_buffers(
+          max_shard_shape_per_dtype, devices_by_host[host_id]
+      )
+    else:
+      zero_buffers = {}
+
+    ctx = _LoadContext(
+        host_id=host_id,
+        num_hosts=num_hosts,
+        global_mesh=global_mesh,
+        devices_by_host=devices_by_host,
+        bundle_bytes=bundle_bytes,
+        bundle_start_offset=bundle_start_offset,
+        zero_buffers=zero_buffers,
+    )
+    return header, tensor_to_owner, ctx, io_time
+
+  def reshard_prepared(
+      self,
+      header: dict[str, Any],
+      tensor_to_owner: dict[str, int],
+      ctx: _LoadContext,
+      abstract_state: dict[str, Any],
+  ) -> tuple[dict[str, Any], float]:
+    """Performs the resharding/TPU reduction synchronously in lockstep."""
+    reshard_time = 0.0
+    restored_pytree = {}
+
+    # Process each tensor in the requested PyTree.
+    for name, abstract_leaf in abstract_state.items():
+      if name not in header:
+        continue
+
+      owner = tensor_to_owner.get(name, 0)
+      info = header[name]
+      target_sharding = abstract_leaf.sharding
+
+      if context_lib.get_context().safetensors_options.ignore_load_sharding:
+        restored_pytree[name] = _build_array_on_single_device(info, owner, ctx)
+      else:
+        global_transient_array = _build_transient_array(name, info, owner, ctx)
+        t0 = time.time()
+        restored_pytree[name] = _reshard_transient_array(
+            global_transient_array, target_sharding, ctx.global_mesh
+        )
+        reshard_time += time.time() - t0
+
+    return restored_pytree, reshard_time
+
 
 class _MultiFileLoader:
   """Multi-file loader for Safetensors checkpoints."""
@@ -633,19 +701,26 @@ class _MultiFileLoader:
 
     loaders = await self._get_loaders()
 
-    # Call load_multi_host on each loader concurrently.
-    # Each loader handles loading from a single file.
+    # Phase 1: Asynchronously read headers/bundles for all files in parallel.
     start = time.time()
-    load_ops = []
+    prepare_ops = []
     for loader in loaders:
-      load_ops.append(loader.load_multi_host(abstract_state))
+      prepare_ops.append(loader.prepare_load(abstract_state))
 
+    prepared_results = await asyncio.gather(*prepare_ops)
+
+    # Phase 2: Loop sequentially in the exact same order to run JAX resharding.
+    # This prevents any JAX collective synchronization mismatch across hosts!
     restored_pytree = {}
     total_io_time = 0.0
     total_reshard_time = 0.0
-    for file_tensors, metrics in await asyncio.gather(*load_ops):
-      total_io_time += metrics["io_time"]
-      total_reshard_time += metrics["reshard_time"]
+
+    for loader, (header, tensor_to_owner, ctx, io_time) in zip(loaders, prepared_results):
+      total_io_time += io_time
+      file_tensors, reshard_time = loader.reshard_prepared(
+          header, tensor_to_owner, ctx, abstract_state
+      )
+      total_reshard_time += reshard_time
       for name, arr in file_tensors.items():
         if name in restored_pytree:
           raise ValueError(f"Duplicate tensor {name} found in multiple files.")
