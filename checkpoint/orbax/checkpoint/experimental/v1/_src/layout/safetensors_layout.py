@@ -145,7 +145,8 @@ def _get_tensor_bundles(
 
 def _create_global_mesh() -> tuple[jax.sharding.Mesh, list[list[jax.Device]]]:
   """Creates a global mesh and returns it along with devices by host and count."""
-  devices_by_host = np.asarray(jax.devices()).reshape(
+  devices = sorted(jax.devices(), key=multihost.process_index_from_device)
+  devices_by_host = np.asarray(devices).reshape(
       multihost.process_count(), jax.local_device_count()
   )
 
